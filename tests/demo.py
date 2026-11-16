@@ -3,7 +3,11 @@
     uv run --extra dev python tests/demo.py 8765      # puis http://127.0.0.1:8765/payer/42/
 
 Moov : réussit 6 s après la création. Orange : code 123456. Carte et PayPal : leur formulaire
-ne peut pas s'afficher sans vraies clés (essai réel : contre le staging).
+ne peut pas s'afficher sans vraies clés.
+
+Contre un vrai Pay (staging) : `PAY_URL` et `PAY_API_KEY` dans l'environnement, aucun faux Pay.
+Commandes `usd` (1,00 USD : carte, PayPal) et `xof` (100 XOF : Moov), avec une référence neuve à
+chaque lancement (`demo-<heure>-usd`).
 """
 
 from __future__ import annotations
@@ -114,14 +118,38 @@ class FauxPay(BaseHTTPRequestHandler):
         return self.repondre(200, self.public(p))
 
 
+LANCEMENT = time.strftime("%H%M%S")
+REELLES = {"usd": (100, "USD"), "xof": (100, "XOF")}
+
+
+def commande_reelle(request, commande):
+    """La fonction `PAY_COMMANDE` de l'essai contre un vrai Pay."""
+    if commande not in REELLES:
+        return None
+    montant, devise = REELLES[commande]
+    reference = f"demo-{LANCEMENT}-{commande}"
+    return {"amount": montant, "currency": devise, "app_reference": reference}
+
+
 def main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    faux = ThreadingHTTPServer(("127.0.0.1", 0), FauxPay)
-    threading.Thread(target=faux.serve_forever, daemon=True).start()
-
     from django.conf import settings
 
+    if os.environ.get("PAY_URL"):
+        # Vrai Pay : l'adresse et la clé viennent de l'environnement (jamais écrites ici).
+        reglages = {"PAY_COMMANDE": "__main__.commande_reelle"}
+        print(f"Pay : {os.environ['PAY_URL']} ; commandes /payer/usd/ et /payer/xof/", flush=True)
+    else:
+        faux = ThreadingHTTPServer(("127.0.0.1", 0), FauxPay)
+        threading.Thread(target=faux.serve_forever, daemon=True).start()
+        reglages = {
+            "PAY_URL": f"http://127.0.0.1:{faux.server_address[1]}",
+            "PAY_API_KEY": "ck_demo",
+            "PAY_COMMANDE": "appli_test.commandes.commande_a_payer",
+        }
+
     settings.configure(
+        **reglages,
         DEBUG=True,
         SECRET_KEY="demo",
         ROOT_URLCONF=__name__,
@@ -132,9 +160,6 @@ def main() -> None:
             {"BACKEND": "django.template.backends.django.DjangoTemplates", "APP_DIRS": True}
         ],
         STATIC_URL="/static/",
-        PAY_URL=f"http://127.0.0.1:{faux.server_address[1]}",
-        PAY_API_KEY="ck_demo",
-        PAY_COMMANDE="appli_test.commandes.commande_a_payer",
     )
     import django
 
