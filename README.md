@@ -9,7 +9,7 @@ facultatif.
 ## Installation
 
 ```bash
-pip install "pay-client @ git+https://github.com/calao-bf/pay-client@v0.2.0"
+pip install "pay-client @ git+https://github.com/calao-bf/pay-client@v0.3.0"
 ```
 
 ## Réglages
@@ -112,6 +112,50 @@ Signaux : `paiement_reussi`, `paiement_echoue`, `paiement_expire`, `paiement_rem
 
 En staging, le simulateur de Pay choisit l'issue par `metadata={"simulation": "echec"}`
 (`succes` par défaut, `otp` avec le code `123456`, `delai`, `indisponible`…).
+
+## Composant de paiement dans la page (Django)
+
+Depuis 0.3 : le payeur paie sur la page de l'application, sans redirection. Le composant montre
+le montant et un bouton par moyen payable, puis ce que Pay demande (message USSD, saisie du code
+OTP, Payment Element de Stripe, bouton PayPal), et le statut dès que Pay le connaît.
+
+Le navigateur ne parle qu'au serveur de l'application (adresses sous `/pay/commande/…`), qui
+appelle Pay avec la clé. **Le montant ne vient jamais de la page** : une fonction du projet
+décrit la commande à payer.
+
+```python
+# settings.py
+PAY_COMMANDE = "boutique.paiements.commande_a_payer"
+
+# boutique/paiements.py
+from django.shortcuts import get_object_or_404
+
+def commande_a_payer(request, commande):
+    cmd = get_object_or_404(Commande, pk=commande, client=request.user)   # sinon 404
+    return {"amount": cmd.total, "currency": "XOF", "app_reference": f"commande-{cmd.pk}"}
+    # facultatifs : "description", "email", "phone" (proposé au payeur), "metadata"
+```
+
+```django
+{% load pay %}
+{% pay_paiement commande.pk suite="/commandes/merci/" %}
+```
+
+- `suite` (facultatif) : la page où envoyer le payeur une fois le paiement reçu.
+- Page rechargée, retour de la banque après 3-D Secure : le composant reprend le paiement en
+  cours, sans en créer un second ; une commande déjà payée l'affiche.
+- Moov et Orange : le numéro saisi est mis au format international (8 chiffres seuls : `+226`).
+- « Changer de moyen de paiement » annule le paiement mobile en attente.
+- Le bloc émet l'événement `pay:statut` (`event.detail` : le paiement) ; classes CSS
+  `.pay-paiement`, `.pay-texte`, `.pay-erreur`, `.pay-moyens`, `.pay-bouton`, `.pay-champ`,
+  `.pay-carte`, `.pay-lien`, pour l'habiller.
+- Le service vendu s'active toujours par le signal `paiement_reussi`, pas par la page.
+- Le suivi garde une requête ouverte jusqu'à 25 s par payeur en attente : servir l'application
+  avec des fils (`gunicorn --threads 8`, par exemple), pas avec des travailleurs synchrones seuls.
+- Politique de sécurité du contenu (CSP), le cas échéant : autoriser `js.stripe.com` (Stripe)
+  et `www.paypal.com`, `www.sandbox.paypal.com` (PayPal).
+- Démonstration locale sans Pay : `uv run --extra dev python tests/demo.py`, puis
+  http://127.0.0.1:8765/payer/42/ (Moov réussit après 6 s, Orange avec le code `123456`).
 
 ## Messages
 

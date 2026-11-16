@@ -6,7 +6,7 @@ notifications, `PAY_WEBHOOK_SECRET`.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .client import ErreurPay, Pay  # noqa: E402
 from .gabarits import Gabarit  # noqa: E402

@@ -1,6 +1,6 @@
 [project]
 name = "pay-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Client de Pay (paiements et messages du parc Calao) : Python, avec un volet Django."
 readme = "README.md"
 requires-python = ">=3.11"
