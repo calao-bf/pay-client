@@ -95,4 +95,4 @@ def test_reglages_obligatoires(monkeypatch):
         Pay()
     monkeypatch.setattr(settings, "PAY_URL", "http://pay.test/")
     assert Pay().url == "http://pay.test"
-    assert pay_client.__version__ == "0.1.0"
+    assert pay_client.__version__ == "0.2.0"

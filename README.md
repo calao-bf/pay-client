@@ -1,7 +1,7 @@
 # pay-client
 
-Client Python de **Pay**, l'orchestrateur de paiements et de messages du parc Calao. Version
-0.1 : les **messages (SMS)**. Les paiements arrivent dans une version suivante.
+Client Python de **Pay**, l'orchestrateur de paiements et de messages du parc Calao, côté
+serveur de l'application : **paiements** (depuis 0.2) et **messages (SMS)**.
 
 Aucune dépendance. Le volet Django (vue des notifications, signaux, commande des gabarits) est
 facultatif.
@@ -9,7 +9,7 @@ facultatif.
 ## Installation
 
 ```bash
-pip install "pay-client @ git+https://github.com/calao-bf/pay-client@v0.1.0"
+pip install "pay-client @ git+https://github.com/calao-bf/pay-client@v0.2.0"
 ```
 
 ## Réglages
@@ -34,13 +34,88 @@ INSTALLED_APPS += ["pay_client"]
 path("pay/", include("pay_client.urls")),   # notifications : https://<site>/pay/webhook/
 ```
 
-À chaque déploiement, après les migrations :
+Si l'application envoie des SMS, à chaque déploiement, après les migrations :
 
 ```bash
 python manage.py pay_gabarits
 ```
 
-## Gabarits
+## Paiements
+
+Le payeur ne quitte jamais l'écran de l'application : ni redirection, ni page hébergée. Le
+serveur crée le paiement, la page montre `next_action`, et le statut arrive à la seconde.
+
+```python
+from pay_client import pay
+
+pay().moyens("XOF", 5000)          # ["moov_money", "orange_money", …] : un bouton par moyen
+
+paiement = pay().creer_paiement(
+    5000, "XOF", "moov_money", f"commande-{commande.pk}",
+    phone="+22670000000",           # obligatoire pour Orange et Moov
+)
+# paiement["id"] : "pay_…" ; paiement["next_action"] : ce que la page montre au payeur
+
+paiement = pay().attendre_paiement(paiement["id"])   # au plus 2 minutes, par défaut
+# "succeeded", "failed" (paiement["failure"]["code"]), "expired",
+# ou encore "pending" : afficher « paiement en cours de vérification, vous serez prévenu »
+```
+
+- Montant : un **entier**, dans la plus petite unité de la devise (5000 XOF ; 2000 = 20,00 USD).
+  Un float lève `TypeError`.
+- Seuls `amount`, `currency`, `method` et la référence de la commande sont obligatoires ;
+  `phone`, `email`, `description` et `metadata` (renvoyées dans les notifications) sont
+  facultatifs. Le pays du payeur est déduit de son téléphone.
+- Une commande n'a qu'un paiement en cours ou encaissé : rappeler `creer_paiement` pour la même
+  commande (double clic, page rechargée) **renvoie ce paiement-là**, sans en créer un second.
+  Après un `failed` ou un `expired`, un nouvel appel crée un nouvel essai.
+
+`next_action["type"]` dit quoi montrer :
+
+| `type` | La page |
+|---|---|
+| `ussd_push` / `ussd_or_otp` | affiche `message` : le payeur valide sur son téléphone |
+| `otp_input` | affiche `message` et `ussd_code`, demande le code, puis le serveur appelle `confirmer_paiement(id, code)` |
+| `card_form` | Payment Element de Stripe avec `publishable_key` et `client_secret` |
+| `paypal_buttons` | boutons PayPal avec `client_id` et `order_id`, puis `confirmer_paiement(id)` après l'approbation |
+
+Les autres gestes :
+
+```python
+pay().confirmer_paiement(paiement_id, "123456")   # code OTP (Orange) ; sans code : PayPal
+pay().annuler_paiement(paiement_id)               # encore en attente seulement
+pay().rembourser(paiement_id, reference="avoir-17")                    # tout
+pay().rembourser(paiement_id, 2000, reference="avoir-18", reason="…")  # une partie
+pay().retrouver_paiements(f"commande-{commande.pk}")   # tous les essais, le plus récent d'abord
+pay().lire_paiement(paiement_id)
+```
+
+- Code OTP refusé : `ErreurPay` 422 (`invalid_otp`, `otp_expired`, `otp_amount_mismatch`) ;
+  le paiement attend un nouveau code : garder l'étape « code », afficher `erreur.message`.
+- `rembourser` : `reference` identifie le remboursement dans l'application ; rappeler avec la
+  même référence ne rembourse pas deux fois.
+
+**C'est la notification qui active le service vendu**, jamais l'attente ni la page :
+
+```python
+from django.dispatch import receiver
+from pay_client.signaux import paiement_reussi
+
+@receiver(paiement_reussi)
+def activer(sender, evenement, paiement, **kwargs):
+    commande = Commande.objects.get(pk=paiement["app_reference"].removeprefix("commande-"))
+    commande.activer()   # une seule fois par événement ; à écrire sans risque s'il est rejoué
+```
+
+Signaux : `paiement_reussi`, `paiement_echoue`, `paiement_expire`, `paiement_rembourse`
+(`paiement["refund"]` décrit le remboursement). Chacun reçoit `evenement` et `paiement`.
+
+En staging, le simulateur de Pay choisit l'issue par `metadata={"simulation": "echec"}`
+(`succes` par défaut, `otp` avec le code `123456`, `delai`, `indisponible`…).
+
+## Messages
+
+### Gabarits
 
 Aucun texte libre n'est envoyé : chaque SMS part d'un gabarit écrit dans le code de
 l'application. Dans n'importe quelle application Django du projet, un module `pay_gabarits.py` :
@@ -66,7 +141,7 @@ GABARITS = [
 `python manage.py pay_gabarits` les déclare tous chez Pay. Un gabarit inchangé ne change rien :
 la commande peut tourner à chaque déploiement.
 
-## Envoyer un SMS
+### Envoyer un SMS
 
 ```python
 from pay_client import envoyer_sms

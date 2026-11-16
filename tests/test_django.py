@@ -9,7 +9,15 @@ from faux_pay import FauxPay
 
 import pay_client
 from pay_client import signer
-from pay_client.signaux import message_echoue, message_recu, notification_pay
+from pay_client.signaux import (
+    message_echoue,
+    message_recu,
+    notification_pay,
+    paiement_echoue,
+    paiement_expire,
+    paiement_rembourse,
+    paiement_reussi,
+)
 
 SECRET = "whsec_essai"
 
@@ -51,6 +59,38 @@ def test_notification_verifiee_une_seule_fois():
     finally:
         message_recu.disconnect(gestionnaire)
     assert recus == [("message.delivered", "msg_1")]
+
+
+def test_signaux_de_paiement():
+    recus = []
+
+    def note(sender, evenement, paiement, **kwargs):
+        recus.append((evenement["type"], paiement["app_reference"]))
+
+    signaux = (paiement_reussi, paiement_echoue, paiement_expire, paiement_rembourse)
+    for signal in signaux:
+        signal.connect(note)
+    try:
+        for n, type_ in enumerate(
+            ["payment.succeeded", "payment.failed", "payment.expired", "payment.refunded"]
+        ):
+            corps = json.dumps(
+                {
+                    "id": f"evt_p{n}",
+                    "type": type_,
+                    "data": {"id": "pay_1", "object": "payment", "app_reference": "c-42"},
+                }
+            ).encode()
+            assert poster(corps, signer(SECRET, corps)).status_code == 200
+    finally:
+        for signal in signaux:
+            signal.disconnect(note)
+    assert recus == [
+        ("payment.succeeded", "c-42"),
+        ("payment.failed", "c-42"),
+        ("payment.expired", "c-42"),
+        ("payment.refunded", "c-42"),
+    ]
 
 
 def test_signature_refusee_et_rotation():

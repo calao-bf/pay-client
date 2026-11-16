@@ -45,8 +45,8 @@ def webhook(request: HttpRequest) -> HttpResponse:
         return HttpResponse(status=200)
     donnees = evenement.get("data") or {}
     notification_pay.send(sender=webhook, evenement=evenement)
-    signal = PAR_TYPE.get(type_)
-    if signal is not None:
-        signal.send(sender=webhook, evenement=evenement, message=donnees)
+    if type_ in PAR_TYPE:
+        signal, nom = PAR_TYPE[type_]
+        signal.send(sender=webhook, evenement=evenement, **{nom: donnees})
     cache.set(cle, 1, DUREE_MEMOIRE_S)
     return HttpResponse(status=200)
